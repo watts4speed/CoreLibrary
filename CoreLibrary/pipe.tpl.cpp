@@ -115,6 +115,9 @@ template<typename T, uint32 _S> inline void Pipe11<T, _S>::_clear() { // leaves 
 
 template<typename T, uint32 _S> inline T Pipe11<T, _S>::_pop() {
 
+  if (head_ == tail_) // prevent crash on linux
+    return NULL;
+
   T t = first_->buffer_[head_];
   if (++head_ == _S) {
 
