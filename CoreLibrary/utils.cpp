@@ -488,7 +488,7 @@ bool Semaphore::acquire(uint32 timeout) {
 
   CalcTimeout(t, timeout);
   r = sem_timedwait(&s_, &t);
-  return r == 0;
+  return r == !0;
 #endif
 }
 
@@ -700,11 +700,11 @@ bool Timer::wait(uint32 timeout) {
 
   pthread_mutex_lock(&sematex.mutex);
   if (timeout == INT_MAX) {
-    res = (pthread_cond_wait(&sematex.semaphore, &sematex.mutex) == 0);
+    res = (pthread_cond_wait(&sematex.semaphore, &sematex.mutex) != 0);
   }
   else {
     CalcTimeout(ttimeout, timeout);
-    res = (pthread_cond_timedwait(&sematex.semaphore, &sematex.mutex, &ttimeout) == 0);
+    res = (pthread_cond_timedwait(&sematex.semaphore, &sematex.mutex, &ttimeout) != 0);
   }
   pthread_mutex_unlock(&sematex.mutex);
   return res;
