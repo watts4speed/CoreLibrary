@@ -97,19 +97,25 @@
 #define ARCH_32
 #elif defined(__GNUC__)
 
+#if !defined(__clang__)
 #if __GNUC__ == 4
 #if __GNUC_MINOR__ < 3
 #error "GNU C++ 4.3 or later is required to compile this program"
 #endif /* __GNUC_MINOR__ */
 #endif /* __GNUC__ */
+#endif /* !__clang__ */
 
-#if defined(__x86_64)
+#if defined(__x86_64__) || defined(__x86_64)
 #define ARCH_64
-#elif defined(__i386)
+#elif defined(__i386__) || defined(__i386)
 #define ARCH_32
+#elif defined(__aarch64__)
+#define ARCH_64
 #endif
-#if defined(__linux)
+#if defined(__linux__) || defined(__linux)
 #define LINUX
+#elif defined(__APPLE__)
+#define MACOS
 #endif
 #endif
 
@@ -143,7 +149,7 @@
 #pragma message( "Warning: _HAS_ITERATOR_DEBUGGING != 0. You _will_ get either slowness or runtime errors." )
 #endif
 
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
 #define core_dll
 #include <iostream>
 #include <string>
@@ -152,13 +158,12 @@
 #include <signal.h>
 #include <limits.h>
 
-#define dll_export __attribute((visibility("default")))
-#define dll_import __attribute((visibility("default")))
+#define dll_export __attribute__((visibility("default")))
+#define dll_import __attribute__((visibility("default")))
 #define cdecl
 
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <netinet/ip.h>
 #include <arpa/inet.h>
 #define SOCKET_ERROR -1
 #define INVALID_SOCKET -1
@@ -251,7 +256,7 @@ typedef HANDLE timer;
 typedef HANDLE event;
 #define signal_handler_function_call WINAPI
 typedef PHANDLER_ROUTINE signal_handler;
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
 typedef void * shared_object;
 typedef pthread_t thread;
 #define thread_ret void *
@@ -263,9 +268,17 @@ typedef struct sockaddr SOCKADDR;
 typedef sem_t semaphore;
 typedef pthread_mutex_t mutex;
 typedef pthread_mutex_t critical_section;
+#if defined MACOS
+typedef int timer;  // placeholder; Timer class uses pthread internally on macOS
+#else
 typedef timer_t timer;
+#endif
 #define signal_handler_function_call
+#if defined MACOS
+typedef sig_t signal_handler;
+#else
 typedef sighandler_t signal_handler;
+#endif
 #define stricmp strcasecmp
 #endif
 
