@@ -95,7 +95,7 @@
 #if defined WINDOWS
 #include <sys/timeb.h>
 #include <time.h>
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
 #include <dlfcn.h>
 #include <errno.h>
 #include <sys/utsname.h>
@@ -139,7 +139,7 @@ public:
 };
 
 #if defined WINDOWS
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
 struct SemaTex {
   pthread_mutex_t mutex;
   pthread_cond_t semaphore;
@@ -241,6 +241,16 @@ public:
 };
 
 class core_dll Timer {
+public:
+#if defined MACOS
+  struct MacOSTimerState {
+    pthread_t thread;
+    volatile bool should_stop;
+    volatile uint64_t deadline_us;
+    volatile uint64_t period_us;
+    struct SemaTex sematex;
+  } macos_timer_;
+#endif
 private:
 #if defined WINDOWS
   timer t_;

@@ -94,7 +94,7 @@ using namespace std::chrono;
 #pragma intrinsic (_InterlockedExchange64)
 #pragma intrinsic (_InterlockedCompareExchange)
 #pragma intrinsic (_InterlockedCompareExchange64)
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
 #endif
 
 #include <algorithm>
@@ -109,7 +109,7 @@ using namespace std::chrono;
 
 namespace core {
 
-#if defined LINUX
+#if defined LINUX || defined MACOS
 bool CalcTimeout(struct timespec &timeout, uint32 ms) {
 
   struct timeval now;
@@ -157,7 +157,7 @@ SharedLibrary::~SharedLibrary() {
 #if defined WINDOWS
   if (library_)
     FreeLibrary(library_);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   if (library_)
     dlclose(library_);
 #endif
@@ -171,6 +171,27 @@ SharedLibrary *SharedLibrary::load(const char *fileName) {
     DWORD error = GetLastError();
     std::cerr << "> Error: unable to load shared library " << fileName << " :" << error << std::endl;
     return NULL;
+  }
+#elif defined MACOS
+  // On macOS, try loading the specified file with .dylib extension.
+  // If that fails, fall back to dlopen(NULL) to access symbols compiled into the binary.
+  const char* suffix = ".dylib";
+  char *libraryName = (char *)calloc(1, strlen(fileName) + strlen(suffix) + 1);
+  strcat(libraryName, fileName);
+  if (strstr(fileName + (strlen(fileName) > 6 ? strlen(fileName) - 6 : 0), ".dylib") == NULL &&
+      strstr(fileName + (strlen(fileName) > 3 ? strlen(fileName) - 3 : 0), ".so") == NULL &&
+      strstr(fileName + (strlen(fileName) > 4 ? strlen(fileName) - 4 : 0), ".dll") == NULL) {
+    strcat(libraryName, suffix);
+  }
+  library_ = dlopen(libraryName, RTLD_NOW | RTLD_GLOBAL);
+  free(libraryName);
+  if (!library_) {
+    // Fall back to loading the current binary's symbols (operators compiled in statically).
+    library_ = dlopen(NULL, RTLD_LAZY | RTLD_GLOBAL);
+    if (!library_) {
+      std::cout << "> Error: unable to load shared library " << fileName << " :" << dlerror() << std::endl;
+      return NULL;
+    }
   }
 #elif defined LINUX
   /*
@@ -210,7 +231,7 @@ void* SharedLibrary::getFunction(const char* functionName) {
       std::cerr << "GetProcAddress > Error: " << error << std::endl;
     }
   }
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   if (library_) {
     function = dlsym(library_, functionName);
     if (!function) {
@@ -246,7 +267,7 @@ void Thread::Wait(Thread **threads, uint32 threadCount) {
 #if defined WINDOWS
   for (uint32 i = 0; i < threadCount; i++)
     WaitForSingleObject(threads[i]->thread_, INFINITE);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   for (uint32 i = 0; i < threadCount; i++)
     pthread_join(threads[i]->thread_, NULL);
 #endif
@@ -258,7 +279,7 @@ void Thread::Wait(Thread *thread) {
     return;
 #if defined WINDOWS
   WaitForSingleObject(thread->thread_, INFINITE);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   pthread_join(thread->thread_, NULL);
 #endif
 }
@@ -266,7 +287,7 @@ void Thread::Wait(Thread *thread) {
 void Thread::Sleep(milliseconds ms) {
 #if defined WINDOWS
   ::Sleep((uint32)ms.count());
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   // we are actually being passed millisecond, so multiply up
   usleep(ms.count() * 1000);
 #endif
@@ -275,7 +296,7 @@ void Thread::Sleep(milliseconds ms) {
 void Thread::Sleep() {
 #if defined WINDOWS
   ::Sleep(INFINITE);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   while (true)
     sleep(1000);
 #endif
@@ -290,7 +311,7 @@ Thread::~Thread() {
   // ExitThread(0);
   if (is_meaningful_)
     CloseHandle(thread_);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   // delete(thread_);
 #endif
 }
@@ -298,7 +319,7 @@ Thread::~Thread() {
 void Thread::start(thread_function f) {
 #if defined WINDOWS
   thread_ = CreateThread(NULL, 65536, f, this, 0, NULL); // 64KB: minimum initial stack size
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   pthread_create(&thread_, NULL, f, this);
 #endif
   is_meaningful_ = true;
@@ -307,7 +328,7 @@ void Thread::start(thread_function f) {
 void Thread::suspend() {
 #if defined WINDOWS
   SuspendThread(thread_);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   pthread_kill(thread_, SIGSTOP);
 #endif
 }
@@ -315,7 +336,7 @@ void Thread::suspend() {
 void Thread::resume() {
 #if defined WINDOWS
   ResumeThread(thread_);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   pthread_kill(thread_, SIGCONT);
 #endif
 }
@@ -323,7 +344,7 @@ void Thread::resume() {
 void Thread::terminate() {
 #if defined WINDOWS
   TerminateThread(thread_, 0);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   pthread_cancel(thread_);
 #endif
 }
@@ -340,7 +361,7 @@ int64 TimeProbe::getCounts() {
   LARGE_INTEGER counter;
   QueryPerformanceCounter(&counter);
   return counter.QuadPart;
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   static struct timeval tv;
   static struct timezone tz;
   gettimeofday(&tv, &tz);
@@ -360,7 +381,7 @@ typedef LONG NTSTATUS;
 typedef NTSTATUS(__stdcall *NSTR)(ULONG, BOOLEAN, PULONG);
 #define STATUS_SUCCESS ((NTSTATUS)0x00000000L)
 bool NtSetTimerResolution(IN ULONG RequestedResolution, IN BOOLEAN Set, OUT PULONG ActualResolution);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   // TODO
 #endif
 
@@ -388,7 +409,7 @@ void Time::Init(uint32 r) {
   // The QueryPerformanceCounter in Get() may not start at zero, so subtract it initially.
   InitTime_ = Timestamp(seconds(0));
   InitTime_ = now - Get().time_since_epoch();
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   // The steady_clock in Get() may not start at zero, so subtract it initially.
   InitTime_ = system_clock_us::now() - duration_cast<microseconds>(steady_clock::now().time_since_epoch());
 #endif
@@ -399,7 +420,7 @@ Timestamp Time::Get() {
   LARGE_INTEGER counter;
   QueryPerformanceCounter(&counter);
   return InitTime_ + microseconds((uint64)(counter.QuadPart * Period_));
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   return InitTime_ + duration_cast<microseconds>(steady_clock::now().time_since_epoch());
 #endif
 }
@@ -441,7 +462,7 @@ uint8 Host::Name(char *name) {
   DWORD s = 255;
   GetComputerName(name, &s);
   return (uint8)s;
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   struct utsname utsname;
   uname(&utsname);
   strcpy(name, utsname.nodename);
@@ -453,7 +474,7 @@ uint8 Host::Name(char *name) {
 
 #if defined WINDOWS
 const uint32 Semaphore::Infinite = INFINITE;
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   /*
    * Normally this should be SEM_VALUE_MAX but apparently the <semaphore.h> header
    * does not define it. The documents I have read indicate that on Linux it is
@@ -465,7 +486,7 @@ const uint32 Semaphore::Infinite = INT_MAX;
 Semaphore::Semaphore(uint32 initialCount, uint32 maxCount) {
 #if defined WINDOWS
   s_ = CreateSemaphore(NULL, initialCount, maxCount, NULL);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   sem_init(&s_, 0, initialCount);
 #endif
 }
@@ -473,7 +494,7 @@ Semaphore::Semaphore(uint32 initialCount, uint32 maxCount) {
 Semaphore::~Semaphore() {
 #if defined WINDOWS
   CloseHandle(s_);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   sem_destroy(&s_);
 #endif
 }
@@ -482,6 +503,22 @@ bool Semaphore::acquire(uint32 timeout) {
 #if defined WINDOWS
   uint32 r = WaitForSingleObject(s_, timeout);
   return r == WAIT_TIMEOUT;
+#elif defined MACOS
+  // sem_timedwait is not available on macOS; use a poll loop with sem_trywait
+  if (timeout == INT_MAX) {
+    return sem_wait(&s_) == 0;
+  }
+  struct timespec ts;
+  ts.tv_sec = 0;
+  ts.tv_nsec = 1000000; // 1ms poll interval
+  uint32 elapsed_ms = 0;
+  while (elapsed_ms < timeout) {
+    if (sem_trywait(&s_) == 0)
+      return true;
+    nanosleep(&ts, NULL);
+    elapsed_ms++;
+  }
+  return false;
 #elif defined LINUX
   struct timespec t;
   int r;
@@ -495,7 +532,7 @@ bool Semaphore::acquire(uint32 timeout) {
 void Semaphore::release(uint32 count) {
 #if defined WINDOWS
   ReleaseSemaphore(s_, count, NULL);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   for (uint32 c = 0; c < count; c++)
     sem_post(&s_);
 #endif
@@ -507,7 +544,7 @@ void Semaphore::reset() {
   do
     r = acquire(0);
   while (!r);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   bool r;
   do
     r = acquire(0);
@@ -519,7 +556,7 @@ void Semaphore::reset() {
 
 #if defined WINDOWS
 const uint32 Mutex::Infinite = INFINITE;
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   /*
    * Normally this should be SEM_VALUE_MAX but apparently the <semaphore.h> header
    * does not define it. The documents I have read indicate that on Linux it is
@@ -531,7 +568,7 @@ const uint32 Mutex::Infinite = INT_MAX;
 Mutex::Mutex() {
 #if defined WINDOWS
   m_ = CreateMutex(NULL, false, NULL);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   pthread_mutex_init(&m_, NULL);
 #endif
 }
@@ -539,7 +576,7 @@ Mutex::Mutex() {
 Mutex::~Mutex() {
 #if defined WINDOWS
   CloseHandle(m_);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   pthread_mutex_destroy(&m_);
 #endif
 }
@@ -548,7 +585,7 @@ bool Mutex::acquire(uint32 timeout) {
 #if defined WINDOWS
   uint32 r = WaitForSingleObject(m_, timeout);
   return r == WAIT_TIMEOUT;
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   auto start = Time::Get();
   auto uTimeout = microseconds(timeout * 1000);
 
@@ -565,7 +602,7 @@ bool Mutex::acquire(uint32 timeout) {
 void Mutex::release() {
 #if defined WINDOWS
   ReleaseMutex(m_);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   pthread_mutex_unlock(&m_);
 #endif
 }
@@ -575,15 +612,20 @@ void Mutex::release() {
 CriticalSection::CriticalSection() {
 #if defined WINDOWS
   InitializeCriticalSection(&cs_);
-#elif defined LINUX
-  pthread_mutex_init(&cs_, NULL);
+#elif defined LINUX || defined MACOS
+  // Use a recursive mutex to match Windows CRITICAL_SECTION behavior (re-entrant).
+  pthread_mutexattr_t attr;
+  pthread_mutexattr_init(&attr);
+  pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+  pthread_mutex_init(&cs_, &attr);
+  pthread_mutexattr_destroy(&attr);
 #endif
 }
 
 CriticalSection::~CriticalSection() {
 #if defined WINDOWS
   DeleteCriticalSection(&cs_);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   pthread_mutex_destroy(&cs_);
 #endif
 }
@@ -591,7 +633,7 @@ CriticalSection::~CriticalSection() {
 void CriticalSection::enter() {
 #if defined WINDOWS
   EnterCriticalSection(&cs_);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   pthread_mutex_lock(&cs_);
 #endif
 }
@@ -599,7 +641,7 @@ void CriticalSection::enter() {
 void CriticalSection::leave() {
 #if defined WINDOWS
   LeaveCriticalSection(&cs_);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   pthread_mutex_unlock(&cs_);
 #endif
 }
@@ -608,9 +650,11 @@ void CriticalSection::leave() {
 
 #if defined WINDOWS
 const uint32 Timer::Infinite = INFINITE;
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
 const uint32 Timer::Infinite = INT_MAX;
+#endif
 
+#if defined LINUX
 static void timer_signal_handler(int sig, siginfo_t *siginfo, void *context) {
   SemaTex* sematex = (SemaTex*)siginfo->si_value.sival_ptr;
   if (sematex == NULL)
@@ -621,12 +665,42 @@ static void timer_signal_handler(int sig, siginfo_t *siginfo, void *context) {
 }
 #endif
 
+#if defined MACOS
+static void* macos_timer_thread(void* arg) {
+  Timer::MacOSTimerState* s = (Timer::MacOSTimerState*)arg;
+  struct timespec ts;
+  if (s->deadline_us > 0) {
+    ts.tv_sec = s->deadline_us / 1000000;
+    ts.tv_nsec = (s->deadline_us % 1000000) * 1000;
+    nanosleep(&ts, NULL);
+  }
+  while (!s->should_stop) {
+    pthread_mutex_lock(&s->sematex.mutex);
+    pthread_cond_broadcast(&s->sematex.semaphore);
+    pthread_mutex_unlock(&s->sematex.mutex);
+    if (s->period_us == 0)
+      break;
+    ts.tv_sec = s->period_us / 1000000;
+    ts.tv_nsec = (s->period_us % 1000000) * 1000;
+    nanosleep(&ts, NULL);
+  }
+  return NULL;
+}
+#endif
+
 Timer::Timer() {
 #if defined WINDOWS
   t_ = CreateWaitableTimer(NULL, false, NULL);
   if (t_ == NULL) {
     printf("Error creating timer\n");
   }
+#elif defined MACOS
+  pthread_cond_init(&macos_timer_.sematex.semaphore, NULL);
+  pthread_mutex_init(&macos_timer_.sematex.mutex, NULL);
+  macos_timer_.should_stop = true;
+  macos_timer_.thread = 0;
+  macos_timer_.deadline_us = 0;
+  macos_timer_.period_us = 0;
 #elif defined LINUX
   pthread_cond_init(&sematex.semaphore, NULL);
   pthread_mutex_init(&sematex.mutex, NULL);
@@ -652,6 +726,14 @@ Timer::Timer() {
 Timer::~Timer() {
 #if defined WINDOWS
   CloseHandle(t_);
+#elif defined MACOS
+  macos_timer_.should_stop = true;
+  if (macos_timer_.thread) {
+    pthread_join(macos_timer_.thread, NULL);
+    macos_timer_.thread = 0;
+  }
+  pthread_cond_destroy(&macos_timer_.sematex.semaphore);
+  pthread_mutex_destroy(&macos_timer_.sematex.mutex);
 #elif defined LINUX
   pthread_cond_destroy(&sematex.semaphore);
   pthread_mutex_destroy(&sematex.mutex);
@@ -667,6 +749,16 @@ void Timer::start(microseconds deadline, milliseconds period) {
   if (!r) {
     printf("Error arming timer\n");
   }
+#elif defined MACOS
+  macos_timer_.should_stop = true;
+  if (macos_timer_.thread) {
+    pthread_join(macos_timer_.thread, NULL);
+    macos_timer_.thread = 0;
+  }
+  macos_timer_.deadline_us = (uint64_t)deadline.count();
+  macos_timer_.period_us = (uint64_t)period.count() * 1000;
+  macos_timer_.should_stop = false;
+  pthread_create(&macos_timer_.thread, NULL, macos_timer_thread, &macos_timer_);
 #elif defined LINUX
   struct itimerspec newtv;
   sigset_t allsigs;
@@ -694,6 +786,18 @@ bool Timer::wait(uint32 timeout) {
 #if defined WINDOWS
   uint32 r = WaitForSingleObject(t_, timeout);
   return r == WAIT_TIMEOUT;
+#elif defined MACOS
+  bool res;
+  struct timespec ttimeout;
+  pthread_mutex_lock(&macos_timer_.sematex.mutex);
+  if (timeout == INT_MAX) {
+    res = (pthread_cond_wait(&macos_timer_.sematex.semaphore, &macos_timer_.sematex.mutex) == 0);
+  } else {
+    CalcTimeout(ttimeout, timeout);
+    res = (pthread_cond_timedwait(&macos_timer_.sematex.semaphore, &macos_timer_.sematex.mutex, &ttimeout) == 0);
+  }
+  pthread_mutex_unlock(&macos_timer_.sematex.mutex);
+  return res;
 #elif defined LINUX
   bool res;
   struct timespec ttimeout;
@@ -716,7 +820,7 @@ bool Timer::wait(uint32 timeout) {
 Event::Event() {
 #if defined WINDOWS
   e_ = CreateEvent(NULL, true, false, NULL);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   // TODO.
 #endif
 }
@@ -724,7 +828,7 @@ Event::Event() {
 Event::~Event() {
 #if defined WINDOWS
   CloseHandle(e_);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   // TODO.
 #endif
 }
@@ -732,7 +836,7 @@ Event::~Event() {
 void Event::wait() {
 #if defined WINDOWS
   WaitForSingleObject(e_, INFINITE);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   // TODO.
 #endif
 }
@@ -740,7 +844,7 @@ void Event::wait() {
 void Event::fire() {
 #if defined WINDOWS
   SetEvent(e_);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   // TODO.
 #endif
 }
@@ -748,7 +852,7 @@ void Event::fire() {
 void Event::reset() {
 #if defined WINDOWS
   ResetEvent(e_);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   // TODO.
 #endif
 }
@@ -763,7 +867,7 @@ void SignalHandler::Add(signal_handler h) {
     std::cerr << "Error: " << e << " failed to add signal handler" << std::endl;
     return;
   }
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   signal(SIGABRT, SIG_IGN);
   signal(SIGPIPE, SIG_IGN);
   signal(SIGBUS, SIG_IGN);
@@ -780,7 +884,7 @@ void SignalHandler::Add(signal_handler h) {
 void SignalHandler::Remove(signal_handler h) {
 #if defined WINDOWS
   SetConsoleCtrlHandler(h, false);
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
   signal(SIGABRT, SIG_IGN);
   signal(SIGPIPE, SIG_IGN);
   signal(SIGBUS, SIG_IGN);
@@ -807,7 +911,7 @@ uint8 BSR(word data) {
   _BitScanReverse64(&index, data);
   return (uint8)index;
 #endif
-#elif defined LINUX
+#elif defined LINUX || defined MACOS
 #if defined ARCH_32
   return (uint8)(31 - __builtin_clz((uint32_t)data));
 #elif defined ARCH_64
